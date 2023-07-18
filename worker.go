@@ -118,6 +118,11 @@ func NewTLSConfig(ca, certificate, privkey []byte) (*tls.Config, error) {
 	}, nil
 }
 
+type publishUpdate struct {
+	pCount int
+	pTime  time.Duration
+}
+
 func (w *Worker) Run(ctx context.Context) {
 	verboseLogger.Printf("[%d] initializing\n", w.WorkerId)
 
@@ -208,26 +213,46 @@ func (w *Worker) Run(ctx context.Context) {
 
 	verboseLogger.Printf("[%d] starting control loop %s\n", w.WorkerId, topicName)
 
+	pChan := make(chan publishUpdate)
+
+	go func(ctx context.Context, resultChan chan publishUpdate) {
+		t0 := time.Now()
+		publishedCount := 0
+	OUT:
+		for i := 0; i < w.NumberOfMessages; i++ {
+			text := w.PayloadGenerator(i)
+			token := publisher.Publish(topicName, w.PublisherQoS, w.Retained, text)
+			publishedCount++
+			select {
+			case <-ctx.Done():
+				break OUT
+			case resultChan <- publishUpdate{
+				pCount: publishedCount,
+			}:
+				token.WaitTimeout(w.Timeout)
+				time.Sleep(w.PauseBetweenMessages)
+			}
+		}
+		publisher.Disconnect(5)
+		publishTime := time.Since(t0)
+		resultChan <- publishUpdate{
+			pCount: publishedCount,
+			pTime:  publishTime,
+		}
+		verboseLogger.Printf("[%d] all messages published\n", w.WorkerId)
+	}(ctx, pChan)
+
 	stopWorker := false
 	receivedCount := 0
 	publishedCount := 0
-
+	var publishTime time.Duration
 	t0 := time.Now()
-	for i := 0; i < w.NumberOfMessages; i++ {
-		text := w.PayloadGenerator(i)
-		token := publisher.Publish(topicName, w.PublisherQoS, w.Retained, text)
-		publishedCount++
-		token.WaitTimeout(w.Timeout)
-		time.Sleep(w.PauseBetweenMessages)
-	}
-	publisher.Disconnect(5)
 
-	publishTime := time.Since(t0)
-	verboseLogger.Printf("[%d] all messages published\n", w.WorkerId)
-
-	t0 = time.Now()
 	for receivedCount < w.NumberOfMessages && !stopWorker {
 		select {
+		case pResult := <-pChan:
+			publishTime = pResult.pTime
+			publishedCount = pResult.pCount
 		case <-queue:
 			receivedCount++
 

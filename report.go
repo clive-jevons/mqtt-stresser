@@ -130,7 +130,7 @@ func printSummary(summary Summary) {
 	fmt.Println()
 	fmt.Printf("# Configuration\n")
 	fmt.Printf("Concurrent Clients: %d\n", summary.Clients)
-	fmt.Printf("Messages / Client:  %d\n", summary.TotalMessages)
+	fmt.Printf("Messages / Client:  %d\n", summary.TotalMessages/summary.Clients)
 
 	fmt.Println()
 	fmt.Printf("# Results\n")
